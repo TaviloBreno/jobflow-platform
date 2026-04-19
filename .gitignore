@@ -1,0 +1,54 @@
+# 🔐 Environment
+.env
+.env.*
+!.env.example
+
+# 🐘 Laravel / PHP
+/vendor/
+/storage/*.key
+/bootstrap/cache/*
+!bootstrap/cache/.gitkeep
+/storage/logs/laravel.log
+/storage/framework/cache/data/*
+!storage/framework/cache/data/.gitkeep
+
+# 🟢 Node.js
+/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# 🐳 Docker
+/.docker/
+*.docker
+docker-compose.override.yml
+!docker-compose.yml
+
+# 💻 IDEs
+.idea/
+.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# 🪟 OS / Cache
+.DS_Store
+Thumbs.db
+Desktop.ini
+"@ | Out-File -FilePath ".gitignore" -Encoding utf8 -Force
+
+# 4. Commit & push inicial
+git add .gitignore
+git commit -m "chore: init repo with multi-stack .gitignore (Laravel+Node+Docker+IDE)"
+git push origin main
+
+# 5. Criar branches do backlog
+git checkout -b develop
+git push origin develop
+
+git checkout -b feature/fase0-documentacao
+git push origin feature/fase0-documentacao
+
+# 6. Voltar para main
+git checkout main
