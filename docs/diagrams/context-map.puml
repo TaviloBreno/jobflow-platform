@@ -1,0 +1,97 @@
+@startuml ContextMap_JobFlow
+skinparam handwritten false
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 12
+
+title Mapa de Contexto - JobFlow Platform
+footer Gerado em %date% | Versão 1.0
+
+' === BOUNDED CONTEXTS ===
+package "JobCatalog" as JC #LightBlue {
+    class "JobAggregate\n- Job\n- JobPosting\n- Category" as JC_Agg
+}
+
+package "CandidateProfile" as CP #LightGreen {
+    class "CandidateAggregate\n- Profile\n- Skills\n- Preferences" as CP_Agg
+}
+
+package "MatchingEngine" as ME #LightCoral {
+    class "MatchingService\n- Scoring Algorithm\n- Ranking" as ME_Svc
+}
+
+package "ResumeProcessing" as RP #LightYellow {
+    class "ParserService\n- PDF/DOCX Parser\n- NLP Extractor" as RP_Svc
+}
+
+package "Analytics" as AN #LightGray {
+    class "ReportingService\n- Dashboards\n- Metrics Aggregator" as AN_Svc
+}
+
+package "Identity" as ID #Lavender {
+    class "AuthContext\n- User\n- Roles\n- Permissions" as ID_Ctx
+}
+
+' === RELAÇÕES E INTEGRAÇÕES ===
+
+' JobCatalog → MatchingEngine (Customer-Supplier via Eventos)
+JC -[#green,dashed]-> ME : "JobPublished/Updated/Closed\n(RabbitMQ)"
+note right of JC
+    Customer-Supplier
+    Event-Driven
+end note
+
+' ResumeProcessing → CandidateProfile (Conformist)
+RP -[#orange,dotted]-> CP : "ResumeParsed\n(HTTP Sync)"
+note right of RP
+    Conformist
+    CP define schema
+end note
+
+' MatchingEngine → Analytics (Shared Kernel)
+ME -[#purple,bold]-> AN : "MatchComputed\n(Kafka/OTel)"
+note right of ME
+    Shared Kernel
+    Metric Schema
+end note
+
+' Identity → Todos os Contextos (Upstream-Downstream)
+ID -[#red,thickness=2]-> JC : "AuthZ Token\n(JWT Claims)"
+ID -[#red,thickness=2]-> CP : "UserProfile Sync"
+ID -[#red,thickness=2]-> ME : "Access Control"
+ID -[#red,thickness=2]-> RP : "Rate Limiting"
+ID -[#red,thickness=2]-> AN : "Data Privacy Filter"
+note right of ID
+    Upstream (Identity Provider)
+    OAuth2/OIDC
+end note
+
+' CandidateProfile → MatchingEngine (Partnership)
+CP -[#blue,dashed]-> ME : "ProfileUpdated\n(RabbitMQ)"
+note right of CP
+    Partnership
+    Co-evolução de schema
+end note
+
+' Analytics ← Todos (Observabilidade)
+JC ..> AN : "JobViewed (OTel)"
+CP ..> AN : "ProfileAccessed"
+RP ..> AN : "ParseDuration"
+ME ..> AN : "MatchLatency"
+note bottom of AN
+    Observability Sink
+    OpenTelemetry + Prometheus
+end note
+
+' === LEGENDA ===
+legend right
+    <color:green>--- dashed</color> : Customer-Supplier (Eventos)
+    <color:orange>--- dotted</color> : Conformist (HTTP Sync)
+    <color:purple>--- bold</color> : Shared Kernel (Métricas)
+    <color:red>--- thickness=2</color> : Upstream Auth (JWT)
+    <color:blue>--- dashed</color> : Partnership (Co-evolução)
+    ..> : Observabilidade (OTel)
+endlegend
+
+@enduml
