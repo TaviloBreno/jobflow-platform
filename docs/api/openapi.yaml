@@ -1,0 +1,1211 @@
+openapi: 3.0.3
+info:
+  title: JobFlow Platform API
+  description: |
+    API para orquestração de fluxos de trabalho e processamento assíncrono de jobs.
+    
+    ## Autenticação
+    Todos os endpoints protegidos requerem header `Authorization: Bearer <JWT>`.
+    
+    ## Versionamento
+    - Versão atual: `v1` (prefixo `/api/v1`)
+    - Mudanças breaking → `v2` com depreciação de `v1` por 6 meses
+    
+    ## Links Estratégicos
+    - [Context Mapping](../context-mapping.md)
+    - [Domain Events Catalog](../domain-events-catalog.md)
+    - [ADR-002: Mensageria com RabbitMQ](../adr/ADR-002-mensageria-rabbitmq.md)
+  version: 1.0.0
+  contact:
+    name: Tavilo Breno
+    url: https://github.com/TaviloBreno/jobflow-platform
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.jobflow.platform/api/v1
+    description: Produção
+  - url: https://staging-api.jobflow.platform/api/v1
+    description: Staging
+  - url: http://localhost:8000/api/v1
+    description: Desenvolvimento Local
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Jobs
+    description: Gestão de vagas de emprego (JobCatalog Context)
+  - name: Candidates
+    description: Perfil e currículos de candidatos (CandidateProfile Context)
+  - name: Matches
+    description: Resultados do motor de matching (MatchingEngine Context)
+
+paths:
+  # ============================================================================
+  # POST /api/v1/jobs - Publicar nova vaga
+  # ============================================================================
+  /jobs:
+    post:
+      tags:
+        - Jobs
+      summary: Publicar nova vaga de emprego
+      description: |
+        Cria uma nova vaga no status `draft` e opcionalmente publica imediatamente.
+        
+        ## Regras de Negócio (Invariantes)
+        - Título: 5-100 caracteres
+        - Descrição: 50-5000 caracteres
+        - SalaryRange: min <= max, mesma moeda
+        - Location: se `remote=false`, city e country são obrigatórios
+        
+        ## Eventos Disparados
+        - `JobPublished` (se `publish=true`): notifica MatchingEngine e Analytics
+      operationId: publishJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+            examples:
+              full_time_remote:
+                summary: Vaga full-time remota
+                value:
+                  title: "Engenheiro de Software Sênior - Backend"
+                  description: "Responsável por arquitetura de microsserviços, liderança técnica e mentoria de desenvolvedores..."
+                  salaryRange:
+                    min: 12000
+                    max: 18000
+                    currency: "BRL"
+                  location:
+                    isRemote: true
+                  employmentType: "FULL_TIME"
+                  requiredSkills:
+                    - "5f8d0d55b54764065c3f8a1c"
+                    - "5f8d0d55b54764065c3f8a2d"
+                  publish: true
+              internship_hybrid:
+                summary: Estágio híbrido
+                value:
+                  title: "Estagiário de QA"
+                  description: "Execução de testes manuais e automatizados, documentação de casos de teste..."
+                  salaryRange:
+                    min: 1500
+                    max: 2000
+                    currency: "BRL"
+                  location:
+                    isRemote: false
+                    city: "São Paulo"
+                    country: "BR"
+                    coordinates:
+                      latitude: -23.5505
+                      longitude: -46.6333
+                  employmentType: "INTERNSHIP"
+                  requiredSkills:
+                    - "5f8d0d55b54764065c3f8a3e"
+                  publish: false
+      responses:
+        '201':
+          description: Vaga criada com sucesso
+          headers:
+            Location:
+              description: URL da nova vaga criada
+              schema:
+                type: string
+                format: uri
+                example: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000"
+            X-Job-Id:
+              description: ID da vaga criada (para rastreabilidade)
+              schema:
+                type: string
+                format: uuid
+                example: "550e8400-e29b-41d4-a716-446655440000"
+            X-Request-Id:
+              description: ID único da requisição (para tracing OpenTelemetry)
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCreatedResponse'
+              examples:
+                published:
+                  summary: Vaga publicada imediatamente
+                  value:
+                    id: "550e8400-e29b-41d4-a716-446655440000"
+                    status: "published"
+                    title: "Engenheiro de Software Sênior - Backend"
+                    publishedAt: "2026-04-21T14:30:00Z"
+                    expiresAt: "2026-06-20T14:30:00Z"
+                    _links:
+                      self: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000"
+                      applications: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000/applications"
+                draft:
+                  summary: Vaga salva como rascunho
+                  value:
+                    id: "550e8400-e29b-41d4-a716-446655440001"
+                    status: "draft"
+                    title: "Estagiário de QA"
+                    createdAt: "2026-04-21T14:30:00Z"
+                    _links:
+                      self: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440001"
+                      publish: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440001/publish"
+        '400':
+          description: Requisição inválida (violação de invariantes)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+              examples:
+                salary_range_invalid:
+                  summary: Salário mínimo maior que máximo
+                  value:
+                    error:
+                      code: "SALARY_RANGE_INVALID"
+                      message: "Minimum salary cannot be greater than maximum"
+                      field: "salaryRange"
+                      requestId: "req_abc123"
+                title_too_short:
+                  summary: Título com menos de 5 caracteres
+                  value:
+                    error:
+                      code: "TITLE_TOO_SHORT"
+                      message: "Job title must be between 5 and 100 characters"
+                      field: "title"
+                      requestId: "req_def456"
+        '401':
+          description: Não autenticado (token ausente ou inválido)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '422':
+          description: Entidade não processável (validação de schema)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnprocessable'
+              examples:
+                missing_required:
+                  summary: Campo obrigatório ausente
+                  value:
+                    error:
+                      code: "VALIDATION_FAILED"
+                      message: "Request body validation failed"
+                      errors:
+                        - field: "title"
+                          message: "The title field is required"
+                        - field: "salaryRange.currency"
+                          message: "The currency field is required"
+                      requestId: "req_ghi789"
+                invalid_enum:
+                  summary: Valor de enum inválido
+                  value:
+                    error:
+                      code: "INVALID_ENUM_VALUE"
+                      message: "employmentType must be one of: FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP, TEMPORARY"
+                      field: "employmentType"
+                      requestId: "req_jkl012"
+        '500':
+          description: Erro interno do servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServerError'
+
+  # ============================================================================
+  # POST /api/v1/candidates/{id}/resume - Upload de currículo
+  # ============================================================================
+  /candidates/{candidateId}/resume:
+    post:
+      tags:
+        - Candidates
+      summary: Enviar currículo para processamento
+      description: |
+        Faz upload de currículo (PDF/DOCX) para parsing assíncrono.
+        
+        ## Fluxo Assíncrono
+        1. Upload → valida formato/tamanho
+        2. Retorna `202 Accepted` com `resumeId`
+        3. Background worker processa via `ResumeProcessing` context
+        4. Eventos `ResumeParsedSuccessfully` ou `ResumeParsingFailed` são emitidos
+        5. Cliente pode pollar `/api/v1/resumes/{resumeId}/status` ou ouvir via WebSocket
+        
+        ## Limites
+        - Formatos: PDF, DOCX (máx 10MB)
+        - Taxa: 5 uploads/hora por candidato (rate limiting)
+      operationId: uploadCandidateResume
+      parameters:
+        - name: candidateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID do candidato (vínculo com Identity Context)
+          example: "660e8400-e29b-41d4-a716-446655440099"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Arquivo do currículo (PDF ou DOCX, máx 10MB)
+                version:
+                  type: integer
+                  description: Versão do currículo (para controle de concorrência otimista)
+                  minimum: 1
+                  default: 1
+              required:
+                - file
+            examples:
+              pdf_upload:
+                summary: Upload de PDF
+                value:
+                  file: "(binary data)"
+                  version: 1
+      responses:
+        '202':
+          description: Upload aceito para processamento assíncrono
+          headers:
+            Location:
+              description: URL para consultar status do processamento
+              schema:
+                type: string
+                format: uri
+                example: "/api/v1/resumes/770e8400-e29b-41d4-a716-4466554400aa/status"
+            X-Resume-Id:
+              description: ID do upload para rastreabilidade
+              schema:
+                type: string
+                format: uuid
+                example: "770e8400-e29b-41d4-a716-4466554400aa"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeUploadAccepted'
+              examples:
+                accepted:
+                  summary: Upload aceito
+                  value:
+                    resumeId: "770e8400-e29b-41d4-a716-4466554400aa"
+                    status: "processing"
+                    uploadedAt: "2026-04-21T14:35:00Z"
+                    estimatedCompletion: "2026-04-21T14:37:00Z"
+                    _links:
+                      status: "/api/v1/resumes/770e8400-e29b-41d4-a716-4466554400aa/status"
+                      cancel: "/api/v1/resumes/770e8400-e29b-41d4-a716-4466554400aa/cancel"
+        '400':
+          description: Requisição inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+              examples:
+                file_too_large:
+                  summary: Arquivo excede limite de 10MB
+                  value:
+                    error:
+                      code: "FILE_TOO_LARGE"
+                      message: "Resume file must be smaller than 10MB"
+                      field: "file"
+                      maxSize: "10MB"
+                      receivedSize: "15.2MB"
+                      requestId: "req_mno345"
+                invalid_format:
+                  summary: Formato de arquivo não suportado
+                  value:
+                    error:
+                      code: "UNSUPPORTED_FORMAT"
+                      message: "Only PDF and DOCX formats are supported"
+                      field: "file"
+                      supportedFormats: ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+                      receivedFormat: "text/plain"
+                      requestId: "req_pqr678"
+        '401':
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+          description: Não autorizado (candidato não pertence ao usuário autenticado)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorForbidden'
+              example:
+                error:
+                  code: "FORBIDDEN"
+                  message: "You can only upload resumes for your own candidate profile"
+                  candidateId: "660e8400-e29b-41d4-a716-446655440099"
+                  authenticatedUserId: "user_xyz"
+                  requestId: "req_stu901"
+        '409':
+          description: Conflito (versão de currículo desatualizada)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorConflict'
+              example:
+                error:
+                  code: "OPTIMISTIC_LOCK_FAILED"
+                  message: "Resume version mismatch. Please fetch latest version and retry."
+                  field: "version"
+                  expectedVersion: 3
+                  providedVersion: 2
+                  requestId: "req_vwx234"
+        '429':
+          description: Rate limit excedido (5 uploads/hora)
+          headers:
+            Retry-After:
+              description: Segundos até o próximo upload permitido
+              schema:
+                type: integer
+                example: 3600
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorRateLimited'
+        '500':
+          description: Erro interno do servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServerError'
+
+  # ============================================================================
+  # GET /api/v1/matches/{candidateId} - Listar matches para candidato
+  # ============================================================================
+  /matches/{candidateId}:
+    get:
+      tags:
+        - Matches
+      summary: Listar vagas compatíveis com candidato
+      description: |
+        Retorna vagas ordenadas por score de matching calculado pelo MatchingEngine.
+        
+        ## Filtros e Ordenação
+        - `minScore`: filtrar apenas matches com score >= valor (0.0-1.0)
+        - `limit`: paginação (default: 20, max: 100)
+        - `offset`: paginação (default: 0)
+        - Ordenação: sempre por `score DESC`, depois `publishedAt DESC`
+        
+        ## Privacidade (LGPD)
+        - Se `candidate.matchingOptIn = false`, retorna 403
+        - Scores são calculados em tempo real ou cache de 5min (configurável)
+      operationId: listCandidateMatches
+      parameters:
+        - name: candidateId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ID do candidato
+          example: "660e8400-e29b-41d4-a716-446655440099"
+        - name: minScore
+          in: query
+          schema:
+            type: number
+            format: float
+            minimum: 0
+            maximum: 1
+            default: 0.5
+          description: Score mínimo para incluir no resultado
+          example: 0.7
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Número máximo de resultados
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Offset para paginação
+      responses:
+        '200':
+          description: Lista de matches recuperada com sucesso
+          headers:
+            X-Total-Count:
+              description: Total de matches disponíveis (para paginação)
+              schema:
+                type: integer
+                example: 47
+            X-Cache-Status:
+              description: Indica se a resposta veio do cache (HIT) ou cálculo em tempo real (MISS)
+              schema:
+                type: string
+                enum: [HIT, MISS]
+                example: "MISS"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchListResponse'
+              examples:
+                with_matches:
+                  summary: Candidato com múltiplos matches
+                  value:
+                    candidateId: "660e8400-e29b-41d4-a716-446655440099"
+                    total: 47
+                    limit: 20
+                    offset: 0
+                    matches:
+                      - jobId: "550e8400-e29b-41d4-a716-446655440000"
+                        jobTitle: "Engenheiro de Software Sênior - Backend"
+                        company: "TechCorp Brasil"
+                        score: 0.94
+                        scoreBreakdown:
+                          skills: 0.95
+                          experience: 0.90
+                          location: 1.0
+                          salary: 0.92
+                          preferences: 0.95
+                        location:
+                          isRemote: true
+                        salaryRange:
+                          min: 12000
+                          max: 18000
+                          currency: "BRL"
+                        publishedAt: "2026-04-20T10:00:00Z"
+                        expiresAt: "2026-06-19T10:00:00Z"
+                        _links:
+                          job: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000"
+                          apply: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000/apply"
+                      - jobId: "550e8400-e29b-41d4-a716-446655440002"
+                        jobTitle: "Tech Lead - Node.js"
+                        company: "Startup Inovadora"
+                        score: 0.87
+                        scoreBreakdown:
+                          skills: 0.85
+                          experience: 0.95
+                          location: 0.80
+                          salary: 0.90
+                          preferences: 0.85
+                        location:
+                          isRemote: false
+                          city: "São Paulo"
+                          country: "BR"
+                        salaryRange:
+                          min: 15000
+                          max: 22000
+                          currency: "BRL"
+                        publishedAt: "2026-04-19T14:00:00Z"
+                        expiresAt: "2026-06-18T14:00:00Z"
+                        _links:
+                          job: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440002"
+                          apply: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440002/apply"
+                    _links:
+                      self: "/api/v1/matches/660e8400-e29b-41d4-a716-446655440099?limit=20&offset=0"
+                      next: "/api/v1/matches/660e8400-e29b-41d4-a716-446655440099?limit=20&offset=20"
+                no_matches:
+                  summary: Candidato sem matches acima do threshold
+                  value:
+                    candidateId: "660e8400-e29b-41d4-a716-446655440099"
+                    total: 0
+                    limit: 20
+                    offset: 0
+                    matches: []
+                    message: "No matches found with score >= 0.7. Try lowering minScore or update your profile."
+                    _links:
+                      self: "/api/v1/matches/660e8400-e29b-41d4-a716-446655440099?minScore=0.7&limit=20&offset=0"
+                      updateProfile: "/api/v1/candidates/660e8400-e29b-41d4-a716-446655440099"
+        '401':
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+          description: Candidato optou por não participar do matching (LGPD)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorForbidden'
+              example:
+                error:
+                  code: "MATCHING_OPT_OUT"
+                  message: "This candidate has opted out of matching. Update preferences to re-enable."
+                  candidateId: "660e8400-e29b-41d4-a716-446655440099"
+                  requestId: "req_yza567"
+        '404':
+          description: Candidato não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotFound'
+              example:
+                error:
+                  code: "CANDIDATE_NOT_FOUND"
+                  message: "No candidate profile found with the provided ID"
+                  candidateId: "660e8400-e29b-41d4-a716-446655440099"
+                  requestId: "req_bcd890"
+        '500':
+          description: Erro interno do servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServerError'
+
+# ============================================================================
+# COMPONENTS: Schemas Reutilizáveis
+# ============================================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token JWT obtido via OAuth2/OIDC do Identity Context.
+        
+        Claims esperados:
+        - `sub`: UUID do usuário
+        - `roles`: array de roles (ex: ["recruiter", "candidate"])
+        - `scopes`: array de scopes (ex: ["jobs:write", "matches:read"])
+
+  schemas:
+    # --- Job Catalog Schemas ---
+    JobCreateRequest:
+      type: object
+      required:
+        - title
+        - description
+        - salaryRange
+        - location
+        - employmentType
+      properties:
+        title:
+          type: string
+          minLength: 5
+          maxLength: 100
+          example: "Engenheiro de Software Sênior - Backend"
+        description:
+          type: string
+          minLength: 50
+          maxLength: 5000
+          example: "Responsável por arquitetura de microsserviços..."
+        salaryRange:
+          $ref: '#/components/schemas/SalaryRange'
+        location:
+          $ref: '#/components/schemas/JobLocation'
+        employmentType:
+          $ref: '#/components/schemas/EmploymentType'
+        requiredSkills:
+          type: array
+          items:
+            type: string
+            format: uuid
+            description: ID da skill no catálogo global
+          maxItems: 20
+          example:
+            - "5f8d0d55b54764065c3f8a1c"
+            - "5f8d0d55b54764065c3f8a2d"
+        preferredSkills:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 20
+        publish:
+          type: boolean
+          default: false
+          description: Se true, publica a vaga imediatamente após criação
+
+    JobCreatedResponse:
+      type: object
+      required:
+        - id
+        - status
+        - title
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        status:
+          type: string
+          enum: [draft, published, closed, expired]
+          example: "published"
+        title:
+          type: string
+          example: "Engenheiro de Software Sênior - Backend"
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-04-21T14:30:00Z"
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Calculado como publishedAt + 60 dias
+          example: "2026-06-20T14:30:00Z"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-21T14:30:00Z"
+        _links:
+          $ref: '#/components/schemas/LinksObject'
+
+    SalaryRange:
+      type: object
+      required:
+        - min
+        - max
+        - currency
+      properties:
+        min:
+          type: number
+          format: float
+          minimum: 0
+          example: 12000
+        max:
+          type: number
+          format: float
+          minimum: 0
+          example: 18000
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+          description: Código ISO 4217
+          example: "BRL"
+      x-invariants:
+        - "min <= max"
+        - "currency must be valid ISO 4217"
+
+    JobLocation:
+      type: object
+      required:
+        - isRemote
+      properties:
+        isRemote:
+          type: boolean
+          example: true
+        city:
+          type: string
+          nullable: true
+          description: Obrigatório se isRemote = false
+          example: "São Paulo"
+        state:
+          type: string
+          nullable: true
+          description: Código ISO 3166-2
+          example: "SP"
+        country:
+          type: string
+          nullable: true
+          pattern: "^[A-Z]{2}$"
+          description: Código ISO 3166-1 alpha-2. Obrigatório se isRemote = false
+          example: "BR"
+        coordinates:
+          type: object
+          nullable: true
+          properties:
+            latitude:
+              type: number
+              format: float
+              minimum: -90
+              maximum: 90
+              example: -23.5505
+            longitude:
+              type: number
+              format: float
+              minimum: -180
+              maximum: 180
+              example: -46.6333
+          required:
+            - latitude
+            - longitude
+      x-invariants:
+        - "If isRemote = false, then city and country are required"
+        - "country must be valid ISO 3166-1 alpha-2"
+
+    EmploymentType:
+      type: string
+      enum:
+        - FULL_TIME
+        - PART_TIME
+        - CONTRACT
+        - INTERNSHIP
+        - TEMPORARY
+      example: "FULL_TIME"
+
+    # --- Candidate/Resume Schemas ---
+    ResumeUploadAccepted:
+      type: object
+      required:
+        - resumeId
+        - status
+        - uploadedAt
+      properties:
+        resumeId:
+          type: string
+          format: uuid
+          example: "770e8400-e29b-41d4-a716-4466554400aa"
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+          example: "processing"
+        uploadedAt:
+          type: string
+          format: date-time
+          example: "2026-04-21T14:35:00Z"
+        estimatedCompletion:
+          type: string
+          format: date-time
+          description: Estimativa baseada em fila de processamento
+          example: "2026-04-21T14:37:00Z"
+        _links:
+          type: object
+          properties:
+            status:
+              type: string
+              format: uri
+              example: "/api/v1/resumes/770e8400-e29b-41d4-a716-4466554400aa/status"
+            cancel:
+              type: string
+              format: uri
+              example: "/api/v1/resumes/770e8400-e29b-41d4-a716-4466554400aa/cancel"
+
+    # --- Match Schemas ---
+    MatchListResponse:
+      type: object
+      required:
+        - candidateId
+        - total
+        - limit
+        - offset
+        - matches
+      properties:
+        candidateId:
+          type: string
+          format: uuid
+        total:
+          type: integer
+          description: Total de matches disponíveis (para paginação)
+          example: 47
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchItem'
+        message:
+          type: string
+          nullable: true
+          description: Mensagem contextual quando não há matches
+          example: "No matches found with score >= 0.7"
+        _links:
+          $ref: '#/components/schemas/PaginationLinks'
+
+    MatchItem:
+      type: object
+      required:
+        - jobId
+        - jobTitle
+        - score
+        - publishedAt
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        jobTitle:
+          type: string
+          example: "Engenheiro de Software Sênior - Backend"
+        company:
+          type: string
+          nullable: true
+          example: "TechCorp Brasil"
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Score de matching calculado pelo MatchingEngine
+          example: 0.94
+        scoreBreakdown:
+          type: object
+          description: Detalhamento do score por dimensão (para transparência)
+          properties:
+            skills:
+              type: number
+              format: float
+              example: 0.95
+            experience:
+              type: number
+              format: float
+              example: 0.90
+            location:
+              type: number
+              format: float
+              example: 1.0
+            salary:
+              type: number
+              format: float
+              example: 0.92
+            preferences:
+              type: number
+              format: float
+              example: 0.95
+        location:
+          $ref: '#/components/schemas/JobLocation'
+        salaryRange:
+          $ref: '#/components/schemas/SalaryRange'
+        publishedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        _links:
+          type: object
+          properties:
+            job:
+              type: string
+              format: uri
+              example: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000"
+            apply:
+              type: string
+              format: uri
+              example: "/api/v1/jobs/550e8400-e29b-41d4-a716-446655440000/apply"
+
+    # --- Error Schemas (Padronizados) ---
+    ErrorBadRequest:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              description: Código de erro máquina-legível para retry logic
+              example: "SALARY_RANGE_INVALID"
+            message:
+              type: string
+              description: Mensagem amigável para exibição ao usuário
+              example: "Minimum salary cannot be greater than maximum"
+            field:
+              type: string
+              nullable: true
+              description: Campo específico que causou o erro (para validações)
+              example: "salaryRange"
+            details:
+              type: object
+              nullable: true
+              additionalProperties: true
+              description: "Detalhes adicionais do erro (ex: valores esperados vs recebidos)"
+            requestId:
+              type: string
+              format: uuid
+              description: ID da requisição para tracing e suporte
+              example: "req_abc123"
+
+    ErrorUnauthorized:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [UNAUTHORIZED, INVALID_TOKEN, TOKEN_EXPIRED]
+              example: "INVALID_TOKEN"
+            message:
+              type: string
+              example: "The provided token is invalid or malformed"
+            requestId:
+              type: string
+              format: uuid
+
+    ErrorForbidden:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [FORBIDDEN, MATCHING_OPT_OUT]
+              example: "FORBIDDEN"
+            message:
+              type: string
+              example: "You don't have permission to access this resource"
+            requestId:
+              type: string
+              format: uuid
+
+    ErrorNotFound:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [RESOURCE_NOT_FOUND, CANDIDATE_NOT_FOUND, JOB_NOT_FOUND]
+              example: "CANDIDATE_NOT_FOUND"
+            message:
+              type: string
+              example: "No candidate profile found with the provided ID"
+            candidateId:
+              type: string
+              format: uuid
+              nullable: true
+            requestId:
+              type: string
+              format: uuid
+
+    ErrorUnprocessable:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_FAILED, INVALID_ENUM_VALUE]
+              example: "VALIDATION_FAILED"
+            message:
+              type: string
+              example: "Request body validation failed"
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    example: "title"
+                  message:
+                    type: string
+                    example: "The title field is required"
+            requestId:
+              type: string
+              format: uuid
+
+    ErrorConflict:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [OPTIMISTIC_LOCK_FAILED, RESOURCE_CONFLICT]
+              example: "OPTIMISTIC_LOCK_FAILED"
+            message:
+              type: string
+              example: "Resume version mismatch. Please fetch latest version and retry."
+            field:
+              type: string
+              nullable: true
+            expectedVersion:
+              type: integer
+              nullable: true
+            providedVersion:
+              type: integer
+              nullable: true
+            requestId:
+              type: string
+              format: uuid
+
+    ErrorRateLimited:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [RATE_LIMIT_EXCEEDED]
+              example: "RATE_LIMIT_EXCEEDED"
+            message:
+              type: string
+              example: "Too many requests. Please retry after the time specified in Retry-After header."
+            limit:
+              type: string
+              example: "5 uploads per hour"
+            requestId:
+              type: string
+              format: uuid
+
+    ErrorInternalServerError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - requestId
+          properties:
+            code:
+              type: string
+              enum: [INTERNAL_SERVER_ERROR]
+              example: "INTERNAL_SERVER_ERROR"
+            message:
+              type: string
+              example: "An unexpected error occurred. Our team has been notified."
+            requestId:
+              type: string
+              format: uuid
+              description: Use este ID ao contactar suporte para rastreabilidade
+
+    # --- Utility Schemas ---
+    LinksObject:
+      type: object
+      properties:
+        self:
+          type: string
+          format: uri
+          description: URL do próprio recurso
+        related:
+          type: string
+          format: uri
+          nullable: true
+          description: URL de recurso relacionado
+
+    PaginationLinks:
+      type: object
+      properties:
+        self:
+          type: string
+          format: uri
+        next:
+          type: string
+          format: uri
+          nullable: true
+          description: URL para próxima página (se houver)
+        prev:
+          type: string
+          format: uri
+          nullable: true
+          description: URL para página anterior (se houver)
+
+# ============================================================================
+# EXTENSÕES: Documentação adicional para ferramentas
+# ============================================================================
+x-webhooks:
+  JobPublished:
+    post:
+      summary: Webhook disparado quando vaga é publicada
+      description: |
+        Notifica consumidores externos (ex: job boards parceiros) quando uma vaga é publicada.
+        
+        **Exchange RabbitMQ:** `jobflow.jobs`  
+        **Routing Key:** `job.published`  
+        **Payload:** Ver [Domain Events Catalog](../domain-events-catalog.md#jobpublished)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_id:
+                  type: string
+                  format: uuid
+                event_type:
+                  type: string
+                  enum: [job.published]
+                aggregate_id:
+                  type: string
+                  format: uuid
+                payload:
+                  $ref: '#/components/schemas/JobCreatedResponse'
+      responses:
+        '200':
+          description: Webhook recebido e processado
+        '202':
+          description: Webhook aceito para processamento assíncrono
+        '400':
+          description: Payload inválido
+        '401':
+          description: Assinatura HMAC inválida (se aplicável)
+
+x-rate-limits:
+  default:
+    requests: 100
+    period: 1h
+    description: Limite padrão para endpoints autenticados
+  upload_resume:
+    requests: 5
+    period: 1h
+    description: Limite específico para upload de currículos
+
+x-observability:
+  tracing:
+    provider: OpenTelemetry
+    headers:
+      - traceparent
+      - tracestate
+      - X-Request-Id
+  metrics:
+    endpoint: /metrics
+    format: Prometheus
+  logging:
+    correlation:
+      header: X-Request-Id
+      propagate: true
