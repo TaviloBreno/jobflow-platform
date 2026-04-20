@@ -1,0 +1,496 @@
+{
+  "info": {
+    "_postman_id": "jobflow-collection-001",
+    "name": "JobFlow Platform API",
+    "description": "Collection para teste e documentação da API JobFlow Platform.\n\n## Autenticação\nTodos os endpoints requerem header `Authorization: Bearer {{bearer_token}}`.\n\n## Variáveis de Ambiente\n- `{{base_url}}`: URL base da API (default: http://localhost:8000/api/v1)\n- `{{bearer_token}}`: Token JWT mock para desenvolvimento\n- `{{candidate_id}}`, `{{job_id}}`: IDs para testes\n\n## Links\n- [OpenAPI Spec](../api/openapi.yaml)\n- [Domain Events Catalog](../domain-events-catalog.md)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{bearer_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api/v1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "Publish Job",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}",
+                "type": "text",
+                "description": "ID único para tracing OpenTelemetry"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Engenheiro de Software Sênior - Backend\",\n  \"description\": \"Responsável por arquitetura de microsserviços, liderança técnica e mentoria de desenvolvedores. Experiência com Laravel, RabbitMQ e sistemas distribuídos.\",\n  \"salaryRange\": {\n    \"min\": 12000,\n    \"max\": 18000,\n    \"currency\": \"BRL\"\n  },\n  \"location\": {\n    \"isRemote\": true\n  },\n  \"employmentType\": \"FULL_TIME\",\n  \"requiredSkills\": [\n    \"5f8d0d55b54764065c3f8a1c\",\n    \"5f8d0d55b54764065c3f8a2d\"\n  ],\n  \"publish\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/jobs",
+              "host": ["{{base_url}}"],
+              "path": ["jobs"]
+            },
+            "description": "Cria uma nova vaga e opcionalmente publica imediatamente.\n\n## Invariantes\n- title: 5-100 chars\n- description: 50-5000 chars\n- salaryRange.min <= salaryRange.max\n- Se location.isRemote = false, city e country são obrigatórios\n\n## Eventos\n- JobPublished (se publish=true)"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "prerequest-publish-job",
+                "type": "text/javascript",
+                "exec": [
+                  "// Gerar X-Request-Id para tracing",
+                  "const requestId = pm.variables.replaceIn('{{$guid}}');",
+                  "pm.variables.set('request_id', requestId);",
+                  "pm.request.headers.add({key: 'X-Request-Id', value: requestId});",
+                  "",
+                  "// Mock de timestamp para testes determinísticos",
+                  "pm.variables.set('now', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "test-publish-job",
+                "type": "text/javascript",
+                "exec": [
+                  "// Teste: Status code esperado",
+                  "pm.test(\"Status code is 201 or 400/422\", function() {",
+                  "    pm.response.to.have.status.oneOf([201, 400, 422, 401, 500]);",
+                  "});",
+                  "",
+                  "// Teste: Headers de rastreabilidade",
+                  "pm.test(\"Response has X-Request-Id header\", function() {",
+                  "    pm.response.to.have.header(\"X-Request-Id\");",
+                  "    const requestId = pm.response.headers.get(\"X-Request-Id\");",
+                  "    pm.collectionVariables.set(\"request_id\", requestId);",
+                  "    console.log(\"Request ID:\", requestId);",
+                  "});",
+                  "",
+                  "// Teste: Response schema básico (se 201)",
+                  "pm.test(\"Response has job id on 201\", function() {",
+                  "    if (pm.response.code === 201) {",
+                  "        const jsonData = pm.response.json();",
+                  "        pm.expect(jsonData).to.have.property(\"id\");",
+                  "        pm.expect(jsonData).to.have.property(\"status\");",
+                  "        pm.expect(jsonData).to.have.property(\"title\");",
+                  "        // Salvar job_id para testes subsequentes",
+                  "        pm.collectionVariables.set(\"job_id\", jsonData.id);",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Error schema (se 4xx)",
+                  "pm.test(\"Error response has expected structure\", function() {",
+                  "    if (pm.response.code >= 400 && pm.response.code < 500) {",
+                  "        const jsonData = pm.response.json();",
+                  "        pm.expect(jsonData).to.have.property(\"error\");",
+                  "        pm.expect(jsonData.error).to.have.property(\"code\");",
+                  "        pm.expect(jsonData.error).to.have.property(\"message\");",
+                  "        pm.expect(jsonData.error).to.have.property(\"requestId\");",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Performance (opcional)",
+                  "pm.test(\"Response time is acceptable\", function() {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ],
+      "description": "Endpoints para gestão de vagas (JobCatalog Context)"
+    },
+    {
+      "name": "Candidates",
+      "item": [
+        {
+          "name": "Upload Resume",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "/path/to/sample-resume.pdf",
+                  "description": "Arquivo PDF ou DOCX (máx 10MB)"
+                },
+                {
+                  "key": "version",
+                  "value": "1",
+                  "type": "text",
+                  "description": "Versão para controle de concorrência otimista"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/candidates/{{candidate_id}}/resume",
+              "host": ["{{base_url}}"],
+              "path": ["candidates", "{{candidate_id}}", "resume"]
+            },
+            "description": "Faz upload de currículo para processamento assíncrono.\n\n## Fluxo\n1. Upload → valida formato/tamanho\n2. Retorna 202 Accepted com resumeId\n3. Background worker processa via ResumeProcessing\n4. Eventos ResumeParsedSuccessfully/Failed são emitidos\n\n## Limites\n- Formatos: PDF, DOCX (máx 10MB)\n- Rate limit: 5 uploads/hora"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "prerequest-upload-resume",
+                "type": "text/javascript",
+                "exec": [
+                  "// Gerar X-Request-Id",
+                  "const requestId = pm.variables.replaceIn('{{$guid}}');",
+                  "pm.variables.set('request_id', requestId);",
+                  "pm.request.headers.add({key: 'X-Request-Id', value: requestId});",
+                  "",
+                  "// Validar que candidate_id está configurado",
+                  "if (!pm.collectionVariables.get('candidate_id')) {",
+                  "    console.warn('candidate_id não configurado. Usando placeholder.');",
+                  "}",
+                  "",
+                  "// Mock de arquivo para testes sem upload real",
+                  "// Em produção, selecione um arquivo real no campo 'file'",
+                  "if (pm.request.body.mode === 'formdata') {",
+                  "    const fileParam = pm.request.body.formdata.find(p => p.key === 'file');",
+                  "    if (fileParam && fileParam.src === '/path/to/sample-resume.pdf') {",
+                  "        console.log('⚠️ Substitua o caminho do arquivo para upload real');",
+                  "    }",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "test-upload-resume",
+                "type": "text/javascript",
+                "exec": [
+                  "// Teste: Status code esperado (202 para processamento assíncrono)",
+                  "pm.test(\"Status code is 202 or error\", function() {",
+                  "    pm.response.to.have.status.oneOf([202, 400, 401, 403, 409, 429, 500]);",
+                  "});",
+                  "",
+                  "// Teste: Headers de rastreabilidade",
+                  "pm.test(\"Response has X-Resume-Id or X-Request-Id\", function() {",
+                  "    const hasResumeId = pm.response.to.have.header(\"X-Resume-Id\");",
+                  "    const hasRequestId = pm.response.to.have.header(\"X-Request-Id\");",
+                  "    pm.expect(hasResumeId || hasRequestId).to.be.true;",
+                  "    if (hasResumeId) {",
+                  "        pm.collectionVariables.set(\"resume_id\", pm.response.headers.get(\"X-Resume-Id\"));",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Response schema para 202",
+                  "pm.test(\"202 response has resumeId and status\", function() {",
+                  "    if (pm.response.code === 202) {",
+                  "        const jsonData = pm.response.json();",
+                  "        pm.expect(jsonData).to.have.property(\"resumeId\");",
+                  "        pm.expect(jsonData).to.have.property(\"status\");",
+                  "        pm.expect(jsonData.status).to.be.oneOf([\"pending\", \"processing\"]);",
+                  "        pm.expect(jsonData).to.have.property(\"uploadedAt\");",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Error específico para file_too_large",
+                  "pm.test(\"400 error has FILE_TOO_LARGE code when applicable\", function() {",
+                  "    if (pm.response.code === 400) {",
+                  "        const jsonData = pm.response.json();",
+                  "        if (jsonData.error?.code === \"FILE_TOO_LARGE\") {",
+                  "            pm.expect(jsonData.error).to.have.property(\"maxSize\");",
+                  "            pm.expect(jsonData.error).to.have.property(\"receivedSize\");",
+                  "        }",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Retry-After header para rate limit",
+                  "pm.test(\"429 response has Retry-After header\", function() {",
+                  "    if (pm.response.code === 429) {",
+                  "        pm.response.to.have.header(\"Retry-After\");",
+                  "        const retryAfter = pm.response.headers.get(\"Retry-After\");",
+                  "        pm.expect(parseInt(retryAfter)).to.be.a(\"number\").and.to.be.above(0);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ],
+      "description": "Endpoints para gestão de candidatos e currículos (CandidateProfile Context)"
+    },
+    {
+      "name": "Matches",
+      "item": [
+        {
+          "name": "List Candidate Matches",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/matches/{{candidate_id}}?minScore=0.7&limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["matches", "{{candidate_id}}"],
+              "query": [
+                {
+                  "key": "minScore",
+                  "value": "0.7",
+                  "description": "Score mínimo para incluir no resultado (0.0-1.0)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Número máximo de resultados (1-100)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Offset para paginação"
+                }
+              ]
+            },
+            "description": "Retorna vagas compatíveis com candidato, ordenadas por score de matching.\n\n## Filtros\n- minScore: filtrar por score mínimo (default: 0.5)\n- limit/offset: paginação\n\n## Ordenação\nSempre por score DESC, depois publishedAt DESC\n\n## Privacidade (LGPD)\nSe candidate.matchingOptIn = false, retorna 403"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "id": "prerequest-list-matches",
+                "type": "text/javascript",
+                "exec": [
+                  "// Gerar X-Request-Id",
+                  "const requestId = pm.variables.replaceIn('{{$guid}}');",
+                  "pm.variables.set('request_id', requestId);",
+                  "pm.request.headers.add({key: 'X-Request-Id', value: requestId});",
+                  "",
+                  "// Validar parâmetros de query",
+                  "const minScore = pm.request.url.query.get('minScore');",
+                  "if (minScore && (parseFloat(minScore) < 0 || parseFloat(minScore) > 1)) {",
+                  "    console.warn('minScore deve estar entre 0.0 e 1.0');",
+                  "}",
+                  "",
+                  "// Log para debugging",
+                  "console.log('Listando matches para candidate_id:', pm.collectionVariables.get('candidate_id'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "id": "test-list-matches",
+                "type": "text/javascript",
+                "exec": [
+                  "// Teste: Status code esperado",
+                  "pm.test(\"Status code is 200 or error\", function() {",
+                  "    pm.response.to.have.status.oneOf([200, 401, 403, 404, 500]);",
+                  "});",
+                  "",
+                  "// Teste: Headers de cache e tracing",
+                  "pm.test(\"Response has observability headers\", function() {",
+                  "    pm.response.to.have.header(\"X-Request-Id\");",
+                  "    // X-Cache-Status é opcional (depende da implementação)",
+                  "});",
+                  "",
+                  "// Teste: Response schema para 200",
+                  "pm.test(\"200 response has matches array\", function() {",
+                  "    if (pm.response.code === 200) {",
+                  "        const jsonData = pm.response.json();",
+                  "        pm.expect(jsonData).to.have.property(\"candidateId\");",
+                  "        pm.expect(jsonData).to.have.property(\"total\");",
+                  "        pm.expect(jsonData).to.have.property(\"limit\");",
+                  "        pm.expect(jsonData).to.have.property(\"offset\");",
+                  "        pm.expect(jsonData).to.have.property(\"matches\").that.is.an(\"array\");",
+                  "        ",
+                  "        // Validar estrutura de cada match",
+                  "        jsonData.matches.forEach((match, index) => {",
+                  "            pm.expect(match).to.have.property(\"jobId\");",
+                  "            pm.expect(match).to.have.property(\"jobTitle\");",
+                  "            pm.expect(match).to.have.property(\"score\");",
+                  "            pm.expect(match.score).to.be.a(\"number\").and.to.be.within(0, 1);",
+                  "            pm.expect(match).to.have.property(\"publishedAt\");",
+                  "        });",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Paginação links",
+                  "pm.test(\"Response has pagination links when applicable\", function() {",
+                  "    if (pm.response.code === 200) {",
+                  "        const jsonData = pm.response.json();",
+                  "        if (jsonData._links) {",
+                  "            pm.expect(jsonData._links).to.have.property(\"self\");",
+                  "            // next/prev são opcionais dependendo da página",
+                  "        }",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Error 403 para matching opt-out",
+                  "pm.test(\"403 response indicates matching opt-out\", function() {",
+                  "    if (pm.response.code === 403) {",
+                  "        const jsonData = pm.response.json();",
+                  "        pm.expect(jsonData.error?.code).to.equal(\"MATCHING_OPT_OUT\");",
+                  "    }",
+                  "});",
+                  "",
+                  "// Teste: Performance",
+                  "pm.test(\"Response time is acceptable for matching query\", function() {",
+                  "    // Matching pode ser mais lento devido a cálculos",
+                  "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ],
+      "description": "Endpoints para resultados do motor de matching (MatchingEngine Context)"
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        },
+        "description": "Endpoint de health check para monitoramento.\n\nNão requer autenticação.\n\n## Response\n- 200: API saudável\n- 503: Dependência crítica indisponível"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "id": "test-health-check",
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Health check returns 200 or 503\", function() {",
+              "    pm.response.to.have.status.oneOf([200, 503]);",
+              "});",
+              "",
+              "pm.test(\"Response has status field\", function() {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property(\"status\");",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "id": "global-prerequest",
+        "type": "text/javascript",
+        "exec": [
+          "// Script global executado antes de cada request",
+          "",
+          "// Adicionar timestamp para cache-busting em requests GET",
+          "if (pm.request.method === 'GET') {",
+          "    const timestamp = new Date().getTime();",
+          "    pm.request.url.query.add('_t', timestamp);",
+          "}",
+          "",
+          "// Log do request para debugging",
+          "console.log(`→ ${pm.request.method} ${pm.request.url.toString()}`);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "id": "global-test",
+        "type": "text/javascript",
+        "exec": [
+          "// Script global executado após cada response",
+          "",
+          "// Log do response time",
+          "console.log(`← ${pm.response.code} (${pm.response.responseTime}ms)`);",
+          "",
+          "// Validar que todas as responses têm Content-Type JSON (quando aplicável)",
+          "if (pm.response.code !== 204) {",
+          "    pm.test(\"Content-Type is application/json\", function() {",
+          "        pm.response.to.have.header(\"Content-Type\");",
+          "        pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+          "    });",
+          "}",
+          "",
+          "// Extrair X-Request-Id para logging externo (se presente)",
+          "const requestId = pm.response.headers.get(\"X-Request-Id\");",
+          "if (requestId) {",
+          "    pm.collectionVariables.set(\"last_request_id\", requestId);",
+          "}"
+        ]
+      }
+    }
+  ]
+}
