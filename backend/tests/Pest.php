@@ -1,5 +1,10 @@
 <?php
 
+uses(
+    Tests\DuskTestCase::class,
+    // Illuminate\Foundation\Testing\DatabaseMigrations::class,
+)->in('Browser');
+
 /*
 |--------------------------------------------------------------------------
 | Test Suite Bootstrap (ADR-004: Pirâmide Adaptada)
