@@ -17,7 +17,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 // Feature e Integration precisam do container Laravel + DB
-uses(TestCase::class)->in('Feature', 'Integration');
+uses(TestCase::class)->in('Unit', 'Feature', 'Integration');
 uses(RefreshDatabase::class)->in('Feature', 'Integration');
 
 // Helper: UUIDs determinísticos para testes reprodutíveis
